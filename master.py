@@ -46,8 +46,8 @@ tschema = StructType([\
     StructField("Id",IntegerType(),True), \
  ])
  # Load the Players and Teams data from CSV file
-pRDD = ssc.read.csv(r"C:\Users\Sarvesh\Downloads\Data\players.csv", schema=pschema, header=True)
-tRDD = ssc.read.csv(r"C:\Users\Sarvesh\Downloads\Data\teams.csv", schema=tschema, header=True)
+pRDD = ssc.read.csv(r"players.csv", schema=pschema, header=True)
+tRDD = ssc.read.csv(r"teams.csv", schema=tschema, header=True)
 pRDD=pRDD.na.fill(0)
 Ids= pRDD.select("Id").rdd.flatMap(lambda x: x).collect()
 columns=['Id','np', 'kp','anp', 'akp','pass_acc','dwc', 'dnc','dlc','total_duels', 'duel_eff', 'eff_k', 'penalty', 'total_kicks','fkick_eff', 'total_shots', 'shots_on_target',  'sot_goal','shots_eff', 'mfoul', 'own_goals','contrib','player_perf','rating','chemistry']
