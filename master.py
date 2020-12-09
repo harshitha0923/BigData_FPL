@@ -1,7 +1,7 @@
 #!usr/bin/python3
 import findspark
 findspark.init()
-# Standard Imports
+#Imports
 from pyspark import SparkContext
 from pyspark.streaming import StreamingContext
 from pyspark.sql import SQLContext
@@ -13,10 +13,12 @@ import os
 import socket
 import sys
 import pyspark.sql.functions as f
+#Initialising Spark Context
 sc = SparkContext(appName="FPLproj",master="local[4]").getOrCreate()
 ssc = SparkSession(sc)
 sql = SQLContext(sc)
 from pyspark.sql.functions import udf, array
+#Initialising Player Schema
 pschema = StructType([ \
     StructField("name",StringType(),False), \
     StructField("birthArea",StringType(),False), \
@@ -37,38 +39,46 @@ pschema = StructType([ \
     StructField("num_key_pass", IntegerType(), False), \
     StructField("duel_eff", IntegerType(), False), \
     StructField("shots_on_target", IntegerType(), False), \
-    StructField("rating", IntegerType(), False), \
-    
+    StructField("rating", IntegerType(), False), \   
   ])
-#Teams Schema
+#Initialising Teams Schema
 tschema = StructType([\
     StructField("name",StringType(),True), \
     StructField("Id",IntegerType(),True), \
  ])
- # Load the Players and Teams data from CSV file
+#Creating DataFrames
 pRDD = ssc.read.csv(r"players.csv", schema=pschema, header=True)
 tRDD = ssc.read.csv(r"teams.csv", schema=tschema, header=True)
 pRDD=pRDD.na.fill(0)
+#Collecting Ids
 Ids= pRDD.select("Id").rdd.flatMap(lambda x: x).collect()
+#Creating Temporary Match Dataframe to Store Metrics
 columns=['Id','np', 'kp','anp', 'akp','pass_acc','dwc', 'dnc','dlc','total_duels', 'duel_eff', 'eff_k', 'penalty', 'total_kicks','fkick_eff', 'total_shots', 'shots_on_target',  'sot_goal','shots_eff', 'mfoul', 'own_goals','contrib','player_perf','rating','chemistry']
 z=[(i,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.5,0.5) for i in Ids]
 mRDD=ssc.createDataFrame(z,columns)
+#Function to calculate Pass Accuracy
 def pass_acc(num_acc_key_pass,num_normal_pass,num_key_pass,num_acc_normal_pass):
     pacc=(num_acc_normal_pass+(num_acc_key_pass*2))/(num_normal_pass+(num_key_pass*2))
     return pacc
+#Function to calculate Duel Efficiency
 def duel_eff(wc,nc,total_duels):
     dueleff=(wc+(nc*0.5))/total_duels
     return dueleff 
+#Function to calculate Free Kick Efficiency
 def free_kick_eff(keff,penalty,total_kicks):
     fkeff=(keff+penalty)/total_kicks
     return fkeff
+#Function to calculate Shots Efficiency
 def shots_eff(sot_goal,shots_on_target,total_shots):
     seff=(sot_goal+(shots_on_target*0.5))/total_shots
     return seff
+#Function to calculate Player Contribution
 player_contrib = udf(lambda arr: sum(arr)/4, FloatType())
 pair_cols=["p1","p2","chemistry"]
 pairs=[(i,j,0.5) for i in Ids for j in Ids  if i!=j ]
-chem_pairs=ssc.createDataFrame(pairs,pair_cols)   
+#Dataframe for chemistry
+chem_pairs=ssc.createDataFrame(pairs,pair_cols) 
+#Function to calculate Chemistry
 def chemistry(i,j,t):
     previ=pRDD.filter(pRDD.Id==i).collect()[0][19]
     curri=mRDD.filter(mRDD.Id==i).collect()[0][24]
@@ -81,6 +91,7 @@ def chemistry(i,j,t):
         same_chemistry(i,j,rate1,rate2,chem)
     if(t=='o'):
         opp_chemistry(i,j,rate1,rate2,chem)
+#Function to calculate Opposite Chemistry
 def opp_chemistry(i,j,rate1,rate2,chem):
     global chem_pairs
     c=chem_pairs.filter((F.col('p1')==i) & (F.col('p2')==j)).collect()[0]
@@ -88,6 +99,7 @@ def opp_chemistry(i,j,rate1,rate2,chem):
         chem_pairs=chem_pairs.withColumn("chemistry",F.when((F.col("p1")==i) & (F.col("p2")==j),c[2]-chem).otherwise(chem_pairs["chemistry"]))
     if((rate1<0 and rate2>0) or (rate1>0 and rate2<0)):
         chem_pairs=chem_pairs.withColumn("chemistry",F.when((F.col("p1")==i) & (F.col("p2")==j),c[2]+chem).otherwise(chem_pairs["chemistry"]))
+#Function to calculate Same Chemistry
 def same_chemistry(i,j,rate1,rate2,chem):
     global chem_pairs
     c=chem_pairs.filter((F.col('p1')==i) & (F.col('p2')==j)).collect()[0]
@@ -95,23 +107,18 @@ def same_chemistry(i,j,rate1,rate2,chem):
         chem_pairs=chem_pairs.withColumn("chemistry",F.when((F.col("p1")==i) & (F.col("p2")==j),c[2]+chem).otherwise(chem_pairs["chemistry"]))
     if((rate1<0 and rate2>0) or (rate1>0 and rate2<0)):
         chem_pairs=chem_pairs.withColumn("chemistry",F.when((F.col("p1")==i) & (F.col("p2")==j),c[2]-chem).otherwise(chem_pairs["chemistry"]))
+#Calculate Metrics
 def profmetrics(batch):
     global pRDD
     global tRDD
     global mRDD
-    #global metrics
     data=[json.loads(rdd) for rdd in batch.collect()]
     match_data=list()
     for i in data:
-        #print(i)
         if 'eventId' in i:
             ids=[j[k] for j in i['tags'] for k in j ]
-            #print(ids)
-            #print(pRDD.filter(i['playerId']==pRDD.Id).collect())
-            #print(ids)
             pid=i['playerId']
             df=pRDD.filter(pid==pRDD.Id).collect()
-            #print(df)
             if(len(df)>0):
                 df=df[0]
                 matchdf=mRDD.filter(pid==mRDD.Id).collect()[0]
@@ -120,34 +127,29 @@ def profmetrics(batch):
                     kp=matchdf[2]
                     nap=matchdf[3]
                     akp=matchdf[4]
-                    #print(nap,akp,kp,np)
                     num_acc_key_pass=df[14]
                     num_normal_pass=df[15]
                     num_key_pass=df[16]
                     num_acc_normal_pass=df[13]
-                    if(1801 in ids):
+                    if(1801 in ids):#accurate key pass
                         #print(1801 in ids)
-                        if(302 in ids):
-                            #num_acc_key_pass=num_acc_key_pass+1
+                        if(302 in ids):#key pass
                             akp=akp+1
                             kp=kp+1
                         else:
-                            #num_acc_normal_pass=num_acc_normal_pass+1
                             nap=nap+1
                             np=np+1
-                    elif(1802 in ids):
-                        #num_normal_pass=num_normal_pass+1
+                    elif(1802 in ids):#not an accurate pass
                         np=np+1
                     elif(302 in ids):
-                        #num_key_pass=num_key_pass+1
                         kp=kp+1
-                    #print(nap,akp,kp,np)
                     num_acc_key_pass= num_acc_key_pass+akp
                     num_normal_pass=num_normal_pass+np
                     num_key_pass=num_key_pass+kp
                     num_acc_normal_pass=num_acc_normal_pass+nap
                     #print(num_acc_key_pass,num_normal_pass,num_key_pass,num_acc_normal_pass)
                     p_acc=pass_acc(num_acc_key_pass,num_normal_pass,num_key_pass,num_acc_normal_pass)
+                    #Updating Pass Accuracy
                     mRDD=mRDD.withColumn("pass_acc",F.when(F.col("Id")==pid,p_acc).otherwise(mRDD["pass_acc"]))
                     mRDD=mRDD.withColumn("akp",F.when(F.col("Id")==pid,akp).otherwise(mRDD["akp"]))
                     mRDD=mRDD.withColumn("anp",F.when(F.col("Id")==pid,nap).otherwise(mRDD["anp"]))
@@ -157,41 +159,43 @@ def profmetrics(batch):
                     pRDD=pRDD.withColumn("num_acc_key_pass",F.when(F.col("Id")==pid,num_acc_key_pass).otherwise(pRDD["num_acc_key_pass"]))
                     pRDD=pRDD.withColumn("num_normal_pass",F.when(F.col("Id")==pid,num_normal_pass).otherwise(pRDD["num_normal_pass"]))
                     pRDD=pRDD.withColumn("num_key_pass",F.when(F.col("Id")==pid,num_key_pass).otherwise(pRDD["num_key_pass"]))
-                    print('pa',pRDD.filter(i['playerId']==pRDD.Id).collect()[0][12])
+                    print('Pass Accuracy: ',pRDD.filter(i['playerId']==pRDD.Id).collect()[0][12])
                 if(i['eventId']==1):#duel
                     wc=matchdf[6]
                     nc=matchdf[7]
                     lc=matchdf[8]
                     total_duels=matchdf[9]
-                    if(701 in ids):
+                    if(701 in ids):#lost
                         wc=wc+1
-                    elif(702 in ids):
+                    elif(702 in ids):#neutral
                         nc=nc+1
-                    elif(703 in ids):
+                    elif(703 in ids):#won
                         lc=lc+1
                     total_duels=total_duels+wc+nc+lc
                     deff=duel_eff(wc,nc,total_duels)
+                    #Updating duel effciency
                     mRDD=mRDD.withColumn("dwc",F.when(F.col("Id")==pid,wc).otherwise(mRDD["dwc"]))
                     mRDD=mRDD.withColumn("dnc",F.when(F.col("Id")==pid,nc).otherwise(mRDD["dnc"]))
                     mRDD=mRDD.withColumn("dlc",F.when(F.col("Id")==pid,lc).otherwise(mRDD["dlc"]))
                     mRDD=mRDD.withColumn("total_duels",F.when(F.col("Id")==pid,total_duels).otherwise(mRDD["total_duels"]))
                     mRDD=mRDD.withColumn("duel_eff",F.when(F.col("Id")==pid,deff).otherwise(mRDD["duel_eff"]))
                     pRDD=pRDD.withColumn("duel_eff",F.when(F.col("Id")==pid,deff).otherwise(pRDD["duel_eff"]))
-                    print('da',pRDD.filter(i['playerId']==pRDD.Id).collect()[0][17])
+                    print('Duel Efficiency: ',pRDD.filter(i['playerId']==pRDD.Id).collect()[0][17])
                 if(i['eventId']==3):#free kick
                     keff=matchdf[11]
                     total_kicks=matchdf[13]
                     penalty=matchdf[12]
                     fkick_eff=matchdf[14]
                     goal=0
-                    if(1801 in ids):
+                    if(1801 in ids):#effective
                         keff=keff+1
-                    if(i['subEventId']==35):
-                        if(101 in ids):
+                    if(i['subEventId']==35):#penalty
+                        if(101 in ids):#goals
                             goals=goals+1
                         penalty=penalty+1
                     total_kicks=total_kicks+1
                     fkick_eff=free_kick_eff(keff,penalty,total_kicks)
+                    #Updating Free Kick Efficiency
                     mRDD=mRDD.withColumn("eff_k",F.when(F.col("Id")==pid,keff).otherwise(mRDD["eff_k"]))
                     mRDD=mRDD.withColumn("penalty",F.when(F.col("Id")==pid,penalty).otherwise(mRDD["penalty"]))
                     mRDD=mRDD.withColumn("total_kicks",F.when(F.col("Id")==pid,total_kicks).otherwise(mRDD["total_kicks"]))
@@ -203,11 +207,12 @@ def profmetrics(batch):
                     sot_goal=matchdf[17]
                     total_shots=total_shots+1
                     psot=df[15]
-                    if(1801 in ids):
-                        if(101 in ids):
+                    if(1801 in ids):#on target
+                        if(101 in ids):#goal 
                             sot_goal=sot_goal+1
                         else:
                             shots_on_target=shots_on_target+1
+                    #Updating Shot Effciency
                     shotseff=shots_eff(sot_goal,shots_on_target,total_shots)
                     mRDD=mRDD.withColumn("total_shots",F.when(F.col("Id")==pid,total_shots).otherwise(mRDD["total_shots"]))
                     mRDD=mRDD.withColumn("shots_on_target",F.when(F.col("Id")==pid,shots_on_target).otherwise(mRDD["shots_on_target"]))
@@ -222,6 +227,7 @@ def profmetrics(batch):
                     mfoul=matchdf[18]
                     mfoul=mfoul+1
                     fouls=fouls+mfoul
+                    #Update fouls
                     mRDD=mRDD.withColumn("mfoul",F.when(F.col("Id")==pid,mfoul).otherwise(mRDD["mfoul"]))
                     pRDD=pRDD.withColumn("fouls",F.when(F.col("Id")==i['playerId'],fouls).otherwise(pRDD["fouls"]))
                 if(i['eventId']==102):
@@ -229,6 +235,7 @@ def profmetrics(batch):
                     ogoals=matchdf[19]
                     owngoals=owngoals+1
                     ogoals=ogoals+1
+                    #Own Goals
                     mRDD=mRDD.withColumn("owngoals",F.when(F.col("Id")==pid,ogoals).otherwise(mRDD["owngoals"]))
                     pRDD=pRDD.withColumn("owngoals",F.when(F.col("Id")==i['playerId'],fouls).otherwise(pRDD["owngoals"]))
         
@@ -265,9 +272,8 @@ def profmetrics(batch):
                 pRDD=pRDD.withColumn("rating",player_rating(array("player_perf","rating")))
             match_data=i
 strc = StreamingContext(sc, 5)
-lines = strc.socketTextStream('localhost', 6100)
-#lines.pprint()
-lines.foreachRDD(profmetrics)
+stream_data = strc.socketTextStream('localhost', 6100)
+stream_data.foreachRDD(profmetrics)
 strc.start()
 strc.awaitTermination()  
 strc.stop(stopSparkContext=False, stopGraceFully=True)
