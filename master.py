@@ -47,13 +47,16 @@ tschema = StructType([\
     StructField("Id",IntegerType(),True), \
  ])
 #Creating DataFrames
+#pRDD maintains the player profile
 pRDD = ssc.read.csv(r"players.csv", schema=pschema, header=True)
 tRDD = ssc.read.csv(r"teams.csv", schema=tschema, header=True)
+#Replacing all none values in Player Schema with 0
 pRDD=pRDD.na.fill(0)
-#Collecting Ids
+#Collecting all the player Ids
 Ids= pRDD.select("Id").rdd.flatMap(lambda x: x).collect()
 #Creating Temporary Match Dataframe to Store Metrics
 columns=['Id','np', 'kp','anp', 'akp','pass_acc','dwc', 'dnc','dlc','total_duels', 'duel_eff', 'eff_k', 'penalty', 'total_kicks','fkick_eff', 'total_shots', 'shots_on_target',  'sot_goal','shots_eff', 'mfoul', 'own_goals','contrib','player_perf','rating','chemistry']
+#Initialising metrics 
 z=[(i,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0.5,0.5) for i in Ids]
 mRDD=ssc.createDataFrame(z,columns)
 #Function to calculate Pass Accuracy
@@ -115,6 +118,7 @@ def profmetrics(batch):
     data=[json.loads(rdd) for rdd in batch.collect()]
     match_data=list()
     for i in data:
+        #For Event Data
         if 'eventId' in i:
             ids=[j[k] for j in i['tags'] for k in j ]
             pid=i['playerId']
@@ -240,8 +244,10 @@ def profmetrics(batch):
                     pRDD=pRDD.withColumn("owngoals",F.when(F.col("Id")==i['playerId'],fouls).otherwise(pRDD["owngoals"]))
         
         else:
+            #For Match Data
             if len(match_data):
                 subs=list()
+                #Finding out players who substituted in or out 
                 for i in match_data['teamsData']:
                     for j in match_data['teamsData'][i]['formation']['substitutions'] :
                         sub_in=j['playerIn']
@@ -249,15 +255,20 @@ def profmetrics(batch):
                         minute=j['minute']
                         subs.append(sub_in)
                         subs.append(sub_out)
+                        #Updating player contribution for subs in and out
                         mRDD=mRDD.withColumn("contrib",F.when(F.col("Id")==sub_in,player_contrib(array("pass_acc","duel_eff","fkick_eff","shots_on_target"))*(minute/90)).otherwise(mRDD["contrib"]))
                         mRDD=mRDD.withColumn("contrib",F.when(F.col("Id")==sub_out,player_contrib(array("pass_acc","duel_eff","fkick_eff","shots_on_target"))*(minute/90)).otherwise(mRDD["contrib"]))
+                #For the players who haven't substituted in or out the player contribution is updated.
                 mRDD=mRDD.withColumn("contrib",F.when(~F.col("Id").isin(subs),player_contrib(array("pass_acc","duel_eff","fkick_eff","shots_on_target"))*(1.05)).otherwise(mRDD["contrib"]))
                 #print(mRDD.select('contrib').collect()) 
+                #User Defined Function to find out Player Contribution
                 performance = udf(lambda arr:arr[0]-(0.005*arr[1]+0.05*arr[2]),FloatType())
+                #User Defined Function to find out Player Rating
                 player_rating=udf(lambda arr:sum(arr)/2,FloatType())
                 mRDD=mRDD.withColumn("player_perf",performance(array("contrib","mfoul","own_goals")))
                 mRDD=mRDD.withColumn("rating",player_rating(array("player_perf","rating")))
                 teamid=dict()
+                #Finding out Players who played in the match
                 for k in match_data["teamsData"]:
                     played=set()
                     for l in match_data["teamsData"][k]['formation']['lineup']:
@@ -267,12 +278,15 @@ def profmetrics(batch):
                         played.add(m['playerOut'])
                     teamid[k]=played
                 tids=[i for i in teamid.keys()]
-                w=[ chemistry(i,j,'s') for i in teamid[tids[0]] for j in teamid[tids[0]]  if i!=j ]
-                v=[ chemistry(i,j,'o') for i in teamid[tids[0]] for j in teamid[tids[1]]]
+                #Calculating Chemistry for each pair of players in the match for same team and opp team.
+                w=[ chemistry(i,j,'s') for i in teamid[tids[0]] for j in teamid[tids[0]]  if i!=j ]#same
+                v=[ chemistry(i,j,'o') for i in teamid[tids[0]] for j in teamid[tids[1]]]#opp
                 pRDD=pRDD.withColumn("rating",player_rating(array("player_perf","rating")))
             match_data=i
+#Accepting streamed data on port 6100
 strc = StreamingContext(sc, 5)
 stream_data = strc.socketTextStream('localhost', 6100)
+#Calling metrics function for each RDD in the Dstream
 stream_data.foreachRDD(profmetrics)
 strc.start()
 strc.awaitTermination()  
