@@ -83,10 +83,10 @@ pairs=[(i,j,0.5) for i in Ids for j in Ids  if i!=j ]
 chem_pairs=ssc.createDataFrame(pairs,pair_cols) 
 #Function to calculate Chemistry
 def chemistry(i,j,t):
-    previ=pRDD.filter(pRDD.Id==i).collect()[0][19]
-    curri=mRDD.filter(mRDD.Id==i).collect()[0][24]
-    prevj=pRDD.filter(pRDD.Id==j).collect()[0][19]
-    currj=mRDD.filter(mRDD.Id==j).collect()[0][24]
+    previ=pRDD.filter(pRDD.Id==i).collect()[0][19]#previous rating of p1
+    curri=mRDD.filter(mRDD.Id==i).collect()[0][24]#current rating of p1
+    prevj=pRDD.filter(pRDD.Id==j).collect()[0][19]#previous rating of p2
+    currj=mRDD.filter(mRDD.Id==j).collect()[0][24]#current rating of p2
     rate1=previ-curri
     rate2=prevj-currj
     chem=abs((rate1+rate2)/2)
@@ -117,7 +117,7 @@ def profmetrics(batch):
     global mRDD
     data=[json.loads(rdd) for rdd in batch.collect()]
     match_data=list()
-    for i in data:
+    for i in data:#iterating through each json object in data
         #For Event Data
         if 'eventId' in i:
             ids=[j[k] for j in i['tags'] for k in j ]
@@ -127,22 +127,21 @@ def profmetrics(batch):
                 df=df[0]
                 matchdf=mRDD.filter(pid==mRDD.Id).collect()[0]
                 if(i['eventId']==8):#pass
-                    np=matchdf[1]
-                    kp=matchdf[2]
-                    nap=matchdf[3]
-                    akp=matchdf[4]
+                    np=matchdf[1]#not an accurate pass
+                    kp=matchdf[2]#key passes
+                    nap=matchdf[3]#accurate pass
+                    akp=matchdf[4]#accurate key pass
                     num_acc_key_pass=df[14]
                     num_normal_pass=df[15]
                     num_key_pass=df[16]
                     num_acc_normal_pass=df[13]
-                    if(1801 in ids):#accurate key pass
+                    if(1801 in ids):#accurate pass
                         #print(1801 in ids)
                         if(302 in ids):#key pass
                             akp=akp+1
                             kp=kp+1
                         else:
-                            nap=nap+1
-                            np=np+1
+                            nap=nap+1 
                     elif(1802 in ids):#not an accurate pass
                         np=np+1
                     elif(302 in ids):
@@ -279,10 +278,11 @@ def profmetrics(batch):
                     teamid[k]=played
                 tids=[i for i in teamid.keys()]
                 #Calculating Chemistry for each pair of players in the match for same team and opp team.
-                w=[ chemistry(i,j,'s') for i in teamid[tids[0]] for j in teamid[tids[0]]  if i!=j ]#same
-                v=[ chemistry(i,j,'o') for i in teamid[tids[0]] for j in teamid[tids[1]]]#opp
-                pRDD=pRDD.withColumn("rating",player_rating(array("player_perf","rating")))
-            match_data=i
+                same_team1=[ chemistry(i,j,'s') for i in teamid[tids[0]] for j in teamid[tids[0]]  if i!=j ]#same
+                same_team2=[ chemistry(i,j,'s') for i in teamid[tids[1]] for j in teamid[tids[1]]  if i!=j ]#same
+                opp_teams=[ chemistry(i,j,'o') for i in teamid[tids[0]] for j in teamid[tids[1]]]#opp
+                pRDD=pRDD.withColumn("rating",player_rating(array("player_perf","rating"))) #contains previous values
+            match_data=i 
 #Accepting streamed data on port 6100
 strc = StreamingContext(sc, 5)
 stream_data = strc.socketTextStream('localhost', 6100)
