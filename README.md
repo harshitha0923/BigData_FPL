@@ -7,9 +7,9 @@ been computed along with the various match and player metrics.
 
 BigData_FPL
 
----python stream.py 
+---stream.py 
 
----spark-submit master.py
+---master.py
 
 Steps to run:
 
