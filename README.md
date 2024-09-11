@@ -39,9 +39,3 @@ Before running the project, make sure you have the following installed:
    ```bash
    python master.py
    ```
-
-## Contributing
-Feel free to fork this repository, make improvements, and create pull requests. Contributions are welcome!
-
-## License
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
